@@ -43,6 +43,9 @@ func GetDB() *gorm.DB {
 	return dbInstance
 }
 
+//A DSN is a string that contains all the information your application needs to connect to a database.
+//Data Source Name
+
 func getDSN() string {
 	dbUser := os.Getenv("DB_USER")
 	dbPass := os.Getenv("DB_PASS")

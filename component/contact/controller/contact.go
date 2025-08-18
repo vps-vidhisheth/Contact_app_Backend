@@ -6,6 +6,8 @@ import (
 	"Contact_App/component/contact/service"
 	detailservice "Contact_App/component/contact_detail/service"
 	"Contact_App/db"
+	"Contact_App/models/contact"
+	"Contact_App/repository"
 	"Contact_App/web"
 	"encoding/json"
 	"net/http"
@@ -53,6 +55,22 @@ func CreateContactHandler(w http.ResponseWriter, r *http.Request) {
 	web.RespondJSON(w, http.StatusCreated, contact)
 }
 
+// func GetContactsHandler(w http.ResponseWriter, r *http.Request) {
+// 	userIDStr := mux.Vars(r)["userID"]
+// 	userID, err := strconv.Atoi(userIDStr)
+// 	if err != nil {
+// 		web.RespondErrorMessage(w, http.StatusBadRequest, "invalid user ID")
+// 		return
+// 	}
+
+// 	contacts, err := service.GetContacts(userID)
+// 	if err != nil {
+// 		web.RespondError(w, err)
+// 		return
+// 	}
+
+//		web.RespondJSON(w, http.StatusOK, contacts)
+//	}
 func GetContactsHandler(w http.ResponseWriter, r *http.Request) {
 	userIDStr := mux.Vars(r)["userID"]
 	userID, err := strconv.Atoi(userIDStr)
@@ -61,14 +79,48 @@ func GetContactsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	contacts, err := service.GetContacts(userID)
-	if err != nil {
-		web.RespondError(w, err)
-		return
+	fName := r.URL.Query().Get("f_name")
+	lName := r.URL.Query().Get("l_name")
+	phone := r.URL.Query().Get("phone")
+
+	uow := repository.NewUnitOfWork(db.GetDB(), true) // readonly
+
+	// Base query with filters
+	baseQuery := uow.DB.Model(&contact.Contact{}).Where("user_id = ?", userID)
+	if strings.TrimSpace(fName) != "" {
+		baseQuery = baseQuery.Where("f_name LIKE ?", "%"+fName+"%")
+	}
+	if strings.TrimSpace(lName) != "" {
+		baseQuery = baseQuery.Where("l_name LIKE ?", "%"+lName+"%")
+	}
+	if strings.TrimSpace(phone) != "" {
+		baseQuery = baseQuery.Joins("JOIN contact_details ON contacts.contact_id = contact_details.contact_id").
+			Where("contact_details.value LIKE ?", "%"+phone+"%")
 	}
 
-	web.RespondJSON(w, http.StatusOK, contacts)
+	// Output slice
+	var contacts []*contact.Contact
+
+	// Paginate and respond
+	web.Paginate(w, r, uow.DB, &contacts, baseQuery)
 }
+
+// func GetContactByIDHandler(w http.ResponseWriter, r *http.Request) {
+// 	userID, err1 := strconv.Atoi(mux.Vars(r)["userID"])
+// 	contactID, err2 := strconv.Atoi(mux.Vars(r)["contact_id"])
+// 	if err1 != nil || err2 != nil {
+// 		web.RespondErrorMessage(w, http.StatusBadRequest, "invalid path parameters")
+// 		return
+// 	}
+
+// 	contact, err := service.GetContactByID(userID, contactID)
+// 	if err != nil {
+// 		web.RespondError(w, err)
+// 		return
+// 	}
+
+// 	web.RespondJSON(w, http.StatusOK, contact)
+// }
 
 func GetContactByIDHandler(w http.ResponseWriter, r *http.Request) {
 	userID, err1 := strconv.Atoi(mux.Vars(r)["userID"])

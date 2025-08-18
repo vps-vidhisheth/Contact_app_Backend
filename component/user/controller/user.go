@@ -8,6 +8,7 @@ import (
 	"Contact_App/web"
 	"encoding/json"
 	"net/http"
+	"os/user"
 	"strconv"
 
 	"github.com/gorilla/mux"
@@ -82,8 +83,8 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 		"token":   token,
 	})
 }
-
 func GetUserByIDHandler(w http.ResponseWriter, r *http.Request) {
+	// Extract user ID from URL
 	idParam := mux.Vars(r)["userID"]
 	id, err := strconv.Atoi(idParam)
 	if err != nil {
@@ -94,26 +95,67 @@ func GetUserByIDHandler(w http.ResponseWriter, r *http.Request) {
 	uow := repository.NewUnitOfWork(db.GetDB(), true)
 	defer uow.Rollback()
 
-	u, err := service.GetUserByID(repository.NewGormRepository(), uow, id)
+	// Optional query params
+	fName := r.URL.Query().Get("f_name")
+	lName := r.URL.Query().Get("l_name")
+	email := r.URL.Query().Get("email")
+
+	// Build filters dynamically
+	filters := []repository.QueryProcessor{
+		repository.Filter("user_id = ?", id), // always filter by user_id
+	}
+	if fName != "" {
+		filters = append(filters, repository.Filter("f_name LIKE ?", "%"+fName+"%"))
+	}
+	if lName != "" {
+		filters = append(filters, repository.Filter("l_name LIKE ?", "%"+lName+"%"))
+	}
+	if email != "" {
+		filters = append(filters, repository.Filter("email LIKE ?", "%"+email+"%"))
+	}
+
+	// Fetch user
+	users, err := service.GetAllUsers(repository.NewGormRepository(), uow, filters...)
 	if err != nil {
 		web.RespondError(w, err)
 		return
 	}
 
-	web.RespondJSON(w, http.StatusOK, u)
+	// If no user found
+	if len(users) == 0 {
+		web.RespondErrorMessage(w, http.StatusNotFound, "User not found")
+		return
+	}
+
+	// Return the first matched user (should be only one because of ID)
+	web.RespondJSON(w, http.StatusOK, users[0])
 }
 
 func GetAllUsersHandler(w http.ResponseWriter, r *http.Request) {
 	uow := repository.NewUnitOfWork(db.GetDB(), true)
 	defer uow.Rollback()
 
-	users, err := service.GetAllUsers(repository.NewGormRepository(), uow)
-	if err != nil {
-		web.RespondError(w, err)
-		return
+	// Base query
+	baseQuery := uow.DB.Model(&user.User{})
+
+	// Query params for filtering
+	fName := r.URL.Query().Get("f_name")
+	lName := r.URL.Query().Get("l_name")
+	email := r.URL.Query().Get("email")
+
+	if fName != "" {
+		baseQuery = baseQuery.Where("f_name LIKE ?", "%"+fName+"%")
+	}
+	if lName != "" {
+		baseQuery = baseQuery.Where("l_name LIKE ?", "%"+lName+"%")
+	}
+	if email != "" {
+		baseQuery = baseQuery.Where("email LIKE ?", "%"+email+"%")
 	}
 
-	web.RespondJSONWithXTotalCount(w, http.StatusOK, len(users), users)
+	// Paginate and respond
+	var users []*user.User
+	web.Paginate(w, r, uow.DB, &users, baseQuery)
 }
 
 func UpdateUserHandler(w http.ResponseWriter, r *http.Request) {

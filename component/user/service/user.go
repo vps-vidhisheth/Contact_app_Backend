@@ -85,21 +85,53 @@ func CreateUser(repo repository.Repository, uow *repository.UnitOfWork, fname, l
 	return newUser, nil
 }
 
-func GetUserByID(repo repository.Repository, uow *repository.UnitOfWork, userID int) (*user.User, error) {
+// func GetUserByID(repo repository.Repository, uow *repository.UnitOfWork, userID int) (*user.User, error) {
+// 	var u user.User
+// 	if err := repo.GetByID(uow, uint(userID), &u); err != nil {
+// 		return nil, err
+// 	}
+// 	return &u, nil
+// }
+
+// func GetAllUsers(repo repository.Repository, uow *repository.UnitOfWork) ([]*user.User, error) {
+// 	var users []*user.User
+// 	if err := repo.GetAll(uow, &users); err != nil {
+// 		return nil, err
+// 	}
+// 	return users, nil
+// }
+
+// GetUserByID fetches a single user by ID
+func GetUserByID(repo repository.Repository, uow *repository.UnitOfWork, userID int, filters ...repository.QueryProcessor) (*user.User, error) {
 	var u user.User
-	if err := repo.GetByID(uow, uint(userID), &u); err != nil {
+
+	// Always filter by ID
+	baseFilters := []repository.QueryProcessor{
+		repository.Filter("user_id = ?", userID),
+	}
+	baseFilters = append(baseFilters, filters...)
+
+	err := repo.GetAll(uow, &[]user.User{u}, baseFilters...) // Use GetAll to support filters
+	if err != nil {
 		return nil, err
 	}
+
 	return &u, nil
 }
 
-func GetAllUsers(repo repository.Repository, uow *repository.UnitOfWork) ([]*user.User, error) {
+// GetAllUsers fetches all users with optional filters
+func GetAllUsers(repo repository.Repository, uow *repository.UnitOfWork, filters ...repository.QueryProcessor) ([]*user.User, error) {
 	var users []*user.User
-	if err := repo.GetAll(uow, &users); err != nil {
+
+	err := repo.GetAll(uow, &users, filters...)
+	if err != nil {
 		return nil, err
 	}
+
 	return users, nil
+
 }
+
 func UpdateUserByID(repo repository.Repository, uow *repository.UnitOfWork, admin *user.User, userID int, updates *struct {
 	FName    string `json:"f_name"`
 	LName    string `json:"l_name"`
@@ -116,23 +148,44 @@ func UpdateUserByID(repo repository.Repository, uow *repository.UnitOfWork, admi
 		return nil, err
 	}
 
+	// Prepare a map for fields to update
+	updateMap := make(map[string]interface{})
 	if updates.FName != "" {
-		existing.FName = updates.FName
+		updateMap["f_name"] = updates.FName
 	}
 	if updates.LName != "" {
-		existing.LName = updates.LName
+		updateMap["l_name"] = updates.LName
 	}
 	if updates.Email != "" {
-		existing.Email = strings.ToLower(updates.Email)
+		updateMap["email"] = strings.ToLower(updates.Email)
 	}
 	if updates.Password != "" {
 		hashedPass, _ := bcrypt.GenerateFromPassword([]byte(updates.Password), bcrypt.DefaultCost)
-		existing.Password = string(hashedPass)
+		updateMap["password"] = string(hashedPass)
 	}
-	existing.IsAdmin = updates.IsAdmin
+	updateMap["is_admin"] = updates.IsAdmin
 
-	if err := repo.Update(uow, &existing); err != nil {
+	// Perform SQL UPDATE
+	if err := repo.UpdateWithMap(uow, &user.User{}, updateMap,
+		repository.Filter("id = ?", userID),
+	); err != nil {
 		return nil, err
+	}
+
+	// Return updated user
+	for k, v := range updateMap {
+		switch k {
+		case "f_name":
+			existing.FName = v.(string)
+		case "l_name":
+			existing.LName = v.(string)
+		case "email":
+			existing.Email = v.(string)
+		case "password":
+			existing.Password = v.(string)
+		case "is_admin":
+			existing.IsAdmin = v.(bool)
+		}
 	}
 
 	return &existing, nil

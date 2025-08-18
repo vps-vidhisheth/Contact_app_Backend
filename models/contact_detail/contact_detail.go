@@ -7,7 +7,7 @@ import (
 
 type ContactDetail struct {
 	ContactDetailsID int    `gorm:"primaryKey;autoIncrement" json:"contact_details_id"`
-	UserID           int    `gorm:"not null" json:"user_id"` // ✅ Add this line
+	UserID           int    `gorm:"not null" json:"user_id"`
 	ContactID        int    `gorm:"not null" json:"contact_id"`
 	Type             string `gorm:"not null" json:"type"`
 	Value            string `gorm:"not null" json:"value"`
