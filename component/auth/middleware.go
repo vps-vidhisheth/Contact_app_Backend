@@ -12,6 +12,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// This is the secret key used to sign and verify JWT tokens.
 var jwtKey = []byte("your-secret-key")
 
 type Claims struct {
@@ -23,6 +24,7 @@ type Claims struct {
 
 type contextKey string
 
+// his is a key used for storing and retrieving data in Go’s context.Context.
 const userContextKey = contextKey("userClaims")
 
 func GenerateToken(userID int, isAdmin bool, isActive bool) (string, error) {

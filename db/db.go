@@ -30,7 +30,7 @@ func InitDB() {
 		&contact_detail.ContactDetail{},
 	)
 	if err != nil {
-		log.Fatalf(" AutoMigrate failed: %v", err)
+		log.Fatalf("AutoMigrate failed: %v", err)
 	}
 
 	log.Println(" Database connected and models migrated successfully.")

@@ -2,6 +2,8 @@ package user
 
 import (
 	"Contact_App/models/contact"
+
+	"gorm.io/gorm"
 )
 
 type User struct {
@@ -14,6 +16,8 @@ type User struct {
 	IsActive bool   `gorm:"column:is_active;default:true" json:"is_active"`
 
 	Contacts []*contact.Contact `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"contacts"`
+
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (u *User) IsAdminActive() bool { return u.IsAdmin && u.IsActive }

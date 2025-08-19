@@ -37,7 +37,6 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Send both message and token
 	json.NewEncoder(w).Encode(map[string]string{
 		"message": "Login successful",
 		"token":   token,

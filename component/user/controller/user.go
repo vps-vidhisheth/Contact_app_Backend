@@ -8,7 +8,6 @@ import (
 	"Contact_App/web"
 	"encoding/json"
 	"net/http"
-	"os/user"
 	"strconv"
 
 	"github.com/gorilla/mux"
@@ -26,10 +25,6 @@ type userInput struct {
 type loginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
-}
-
-type loginResponse struct {
-	Token string `json:"token"`
 }
 
 func CreateUserHandler(w http.ResponseWriter, r *http.Request) {
@@ -66,13 +61,13 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := service.Authenticate(db.GetDB(), creds.Email, creds.Password)
+	u, err := service.Authenticate(db.GetDB(), creds.Email, creds.Password)
 	if err != nil {
 		web.RespondErrorMessage(w, http.StatusUnauthorized, "Login failed. Please check credentials")
 		return
 	}
 
-	token, err := service.GenerateJWT(user)
+	token, err := service.GenerateJWT(u)
 	if err != nil {
 		web.RespondErrorMessage(w, http.StatusInternalServerError, "Failed to generate token")
 		return
@@ -83,8 +78,8 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 		"token":   token,
 	})
 }
+
 func GetUserByIDHandler(w http.ResponseWriter, r *http.Request) {
-	// Extract user ID from URL
 	idParam := mux.Vars(r)["userID"]
 	id, err := strconv.Atoi(idParam)
 	if err != nil {
@@ -95,78 +90,53 @@ func GetUserByIDHandler(w http.ResponseWriter, r *http.Request) {
 	uow := repository.NewUnitOfWork(db.GetDB(), true)
 	defer uow.Rollback()
 
-	// Optional query params
-	fName := r.URL.Query().Get("f_name")
-	lName := r.URL.Query().Get("l_name")
-	email := r.URL.Query().Get("email")
+	userRepo := repository.NewGormRepository()
 
-	// Build filters dynamically
-	filters := []repository.QueryProcessor{
-		repository.Filter("user_id = ?", id), // always filter by user_id
-	}
-	if fName != "" {
-		filters = append(filters, repository.Filter("f_name LIKE ?", "%"+fName+"%"))
-	}
-	if lName != "" {
-		filters = append(filters, repository.Filter("l_name LIKE ?", "%"+lName+"%"))
-	}
-	if email != "" {
-		filters = append(filters, repository.Filter("email LIKE ?", "%"+email+"%"))
-	}
-
-	// Fetch user
-	users, err := service.GetAllUsers(repository.NewGormRepository(), uow, filters...)
+	// Fetch user by ID
+	u, err := service.GetUserByID(userRepo, uow, id)
 	if err != nil {
-		web.RespondError(w, err)
-		return
-	}
-
-	// If no user found
-	if len(users) == 0 {
 		web.RespondErrorMessage(w, http.StatusNotFound, "User not found")
 		return
 	}
 
-	// Return the first matched user (should be only one because of ID)
-	web.RespondJSON(w, http.StatusOK, users[0])
+	web.RespondJSON(w, http.StatusOK, u)
 }
 
 func GetAllUsersHandler(w http.ResponseWriter, r *http.Request) {
 	uow := repository.NewUnitOfWork(db.GetDB(), true)
 	defer uow.Rollback()
 
-	// Base query
-	baseQuery := uow.DB.Model(&user.User{})
+	userRepo := repository.NewGormRepository()
 
-	// Query params for filtering
-	fName := r.URL.Query().Get("f_name")
-	lName := r.URL.Query().Get("l_name")
-	email := r.URL.Query().Get("email")
-
-	if fName != "" {
-		baseQuery = baseQuery.Where("f_name LIKE ?", "%"+fName+"%")
+	// Build filters
+	filters := []repository.QueryProcessor{}
+	if fName := r.URL.Query().Get("f_name"); fName != "" {
+		filters = append(filters, repository.Filter("f_name LIKE ?", "%"+fName+"%"))
 	}
-	if lName != "" {
-		baseQuery = baseQuery.Where("l_name LIKE ?", "%"+lName+"%")
+	if lName := r.URL.Query().Get("l_name"); lName != "" {
+		filters = append(filters, repository.Filter("l_name LIKE ?", "%"+lName+"%"))
 	}
-	if email != "" {
-		baseQuery = baseQuery.Where("email LIKE ?", "%"+email+"%")
+	if email := r.URL.Query().Get("email"); email != "" {
+		filters = append(filters, repository.Filter("email LIKE ?", "%"+email+"%"))
 	}
 
-	// Paginate and respond
-	var users []*user.User
-	web.Paginate(w, r, uow.DB, &users, baseQuery)
+	users, err := service.GetAllUsers(userRepo, uow, filters...)
+	if err != nil {
+		web.RespondError(w, err)
+		return
+	}
+
+	web.RespondJSON(w, http.StatusOK, users)
 }
-
 func UpdateUserHandler(w http.ResponseWriter, r *http.Request) {
 	claims := auth.GetUserClaims(r)
-	if claims == nil {
-		web.RespondErrorMessage(w, http.StatusUnauthorized, "Unauthorized")
+	if claims == nil || !claims.IsActive {
+		web.RespondErrorMessage(w, http.StatusUnauthorized, "Unauthorized or inactive user")
 		return
 	}
 
 	idParam := mux.Vars(r)["userID"]
-	id, err := strconv.Atoi(idParam)
+	userID, err := strconv.Atoi(idParam)
 	if err != nil {
 		web.RespondErrorMessage(w, http.StatusBadRequest, "Invalid user ID")
 		return
@@ -183,9 +153,9 @@ func UpdateUserHandler(w http.ResponseWriter, r *http.Request) {
 
 	userRepo := repository.NewGormRepository()
 
-	adminUser, err := service.GetUserByID(userRepo, uow, claims.UserID)
-	if err != nil {
-		web.RespondError(w, err)
+	// Admins can update any user; non-admins can update only themselves
+	if !claims.IsAdmin && claims.UserID != userID {
+		web.RespondErrorMessage(w, http.StatusForbidden, "You can only update your own profile")
 		return
 	}
 
@@ -198,12 +168,16 @@ func UpdateUserHandler(w http.ResponseWriter, r *http.Request) {
 	}{
 		FName:    input.FName,
 		LName:    input.LName,
-		IsAdmin:  input.IsAdmin,
 		Email:    input.Email,
 		Password: input.Password,
 	}
 
-	updatedUser, err := service.UpdateUserByID(userRepo, uow, adminUser, id, updateData)
+	// Only admins can update the IsAdmin field
+	if claims.IsAdmin {
+		updateData.IsAdmin = input.IsAdmin
+	}
+
+	updatedUser, err := service.UpdateUserByID(userRepo, uow, claims, userID, updateData)
 	if err != nil {
 		web.RespondError(w, err)
 		return
@@ -233,7 +207,9 @@ func DeleteUserHandler(w http.ResponseWriter, r *http.Request) {
 	uow := repository.NewUnitOfWork(db.GetDB(), false)
 	defer uow.Rollback()
 
-	err = service.DeleteUserByID(repository.NewGormRepository(), uow, claims.UserID, userID)
+	userRepo := repository.NewGormRepository()
+
+	err = service.DeleteUserByIDSoftDelete(userRepo, uow, claims.UserID, userID)
 	if err != nil {
 		web.RespondError(w, err)
 		return
@@ -241,6 +217,6 @@ func DeleteUserHandler(w http.ResponseWriter, r *http.Request) {
 
 	uow.Commit()
 	web.RespondJSON(w, http.StatusOK, map[string]string{
-		"message": "User deleted permanently",
+		"message": "User deleted successfully",
 	})
 }

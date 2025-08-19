@@ -2,6 +2,7 @@ package service
 
 import (
 	"Contact_App/apperror"
+	"Contact_App/component/auth"
 	"Contact_App/models/user"
 	"Contact_App/repository"
 	"errors"
@@ -85,43 +86,32 @@ func CreateUser(repo repository.Repository, uow *repository.UnitOfWork, fname, l
 	return newUser, nil
 }
 
-// func GetUserByID(repo repository.Repository, uow *repository.UnitOfWork, userID int) (*user.User, error) {
-// 	var u user.User
-// 	if err := repo.GetByID(uow, uint(userID), &u); err != nil {
-// 		return nil, err
-// 	}
-// 	return &u, nil
-// }
-
-// func GetAllUsers(repo repository.Repository, uow *repository.UnitOfWork) ([]*user.User, error) {
-// 	var users []*user.User
-// 	if err := repo.GetAll(uow, &users); err != nil {
-// 		return nil, err
-// 	}
-// 	return users, nil
-// }
-
 // GetUserByID fetches a single user by ID
 func GetUserByID(repo repository.Repository, uow *repository.UnitOfWork, userID int, filters ...repository.QueryProcessor) (*user.User, error) {
-	var u user.User
-
 	// Always filter by ID
 	baseFilters := []repository.QueryProcessor{
 		repository.Filter("user_id = ?", userID),
 	}
 	baseFilters = append(baseFilters, filters...)
 
-	err := repo.GetAll(uow, &[]user.User{u}, baseFilters...) // Use GetAll to support filters
+	// Use a slice to receive results
+	var users []user.User
+	err := repo.GetAll(uow, &users, baseFilters...)
 	if err != nil {
 		return nil, err
 	}
 
-	return &u, nil
+	if len(users) == 0 {
+		return nil, fmt.Errorf("user with ID %d not found", userID)
+	}
+
+	// Return the first matched user
+	return &users[0], nil
 }
 
 // GetAllUsers fetches all users with optional filters
-func GetAllUsers(repo repository.Repository, uow *repository.UnitOfWork, filters ...repository.QueryProcessor) ([]*user.User, error) {
-	var users []*user.User
+func GetAllUsers(repo repository.Repository, uow *repository.UnitOfWork, filters ...repository.QueryProcessor) ([]user.User, error) {
+	var users []user.User
 
 	err := repo.GetAll(uow, &users, filters...)
 	if err != nil {
@@ -129,26 +119,31 @@ func GetAllUsers(repo repository.Repository, uow *repository.UnitOfWork, filters
 	}
 
 	return users, nil
-
 }
-
-func UpdateUserByID(repo repository.Repository, uow *repository.UnitOfWork, admin *user.User, userID int, updates *struct {
-	FName    string `json:"f_name"`
-	LName    string `json:"l_name"`
-	IsAdmin  bool   `json:"is_admin"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}) (*user.User, error) {
-	if !admin.IsAdminActive() {
-		return nil, apperror.NewAuthError("update user")
-	}
+func UpdateUserByID(
+	repo repository.Repository,
+	uow *repository.UnitOfWork,
+	claims *auth.Claims,
+	userID int,
+	updates *struct {
+		FName    string `json:"f_name"`
+		LName    string `json:"l_name"`
+		IsAdmin  bool   `json:"is_admin"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	},
+) (*user.User, error) {
 
 	var existing user.User
 	if err := repo.GetByID(uow, uint(userID), &existing); err != nil {
 		return nil, err
 	}
 
-	// Prepare a map for fields to update
+	// Non-admins cannot update the is_admin field
+	if !claims.IsAdmin {
+		updates.IsAdmin = existing.IsAdmin
+	}
+
 	updateMap := make(map[string]interface{})
 	if updates.FName != "" {
 		updateMap["f_name"] = updates.FName
@@ -167,12 +162,12 @@ func UpdateUserByID(repo repository.Repository, uow *repository.UnitOfWork, admi
 
 	// Perform SQL UPDATE
 	if err := repo.UpdateWithMap(uow, &user.User{}, updateMap,
-		repository.Filter("id = ?", userID),
+		repository.Filter("user_id = ?", userID),
 	); err != nil {
 		return nil, err
 	}
 
-	// Return updated user
+	// Update local struct to return
 	for k, v := range updateMap {
 		switch k {
 		case "f_name":
@@ -206,6 +201,36 @@ func DeleteUserByID(repo repository.Repository, uow *repository.UnitOfWork, admi
 	var target user.User
 	if err := repo.GetByID(uow, uint(userID), &target); err != nil {
 		return err
+	}
+
+	if err := uow.DB.Delete(&target).Error; err != nil {
+		return apperror.NewInternalError("failed to permanently delete user")
+	}
+
+	return nil
+}
+
+func DeleteUserByIDSoftDelete(repo repository.Repository, uow *repository.UnitOfWork, adminID int, userID int) error {
+	var admin user.User
+	if err := repo.GetByID(uow, uint(adminID), &admin); err != nil {
+		return err
+	}
+
+	if !admin.IsAdminActive() {
+		return apperror.NewAuthError("delete user")
+	}
+
+	if adminID == userID {
+		return apperror.NewValidationError("user", "admin cannot delete their own account")
+	}
+
+	var target user.User
+	if err := repo.GetByID(uow, uint(userID), &target); err != nil {
+		return err
+	}
+
+	if target.DeletedAt.Valid {
+		return apperror.NewValidationError("user", "user is already deleted")
 	}
 
 	if err := uow.DB.Delete(&target).Error; err != nil {
