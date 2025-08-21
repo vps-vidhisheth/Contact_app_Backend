@@ -8,8 +8,9 @@ import (
 )
 
 type CreateDetailRequest struct {
-	Type  string `json:"type"`
-	Value string `json:"value"`
+	Type     string `json:"type"`
+	Value    string `json:"value"`
+	IsActive bool   `json:"is_active"`
 }
 
 type UpdateDetailRequest struct {

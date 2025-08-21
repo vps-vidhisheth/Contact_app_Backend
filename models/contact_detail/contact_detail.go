@@ -11,7 +11,7 @@ type ContactDetail struct {
 	ContactID        int    `gorm:"not null" json:"contact_id"`
 	Type             string `gorm:"not null" json:"type"`
 	Value            string `gorm:"not null" json:"value"`
-	IsActive         bool   `json:"is_active"`
+	IsActive         bool   `json:"is_active" gorm:"default:true"`
 }
 
 func (d *ContactDetail) updateType(value interface{}) error {
