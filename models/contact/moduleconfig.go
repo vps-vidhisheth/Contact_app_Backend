@@ -1,57 +1,33 @@
 package contact
 
 import (
-	"Contact_App/apperror"
-	"errors"
-	"strings"
+	"log"
+	"sync"
+
+	"github.com/jinzhu/gorm"
 )
 
-var ErrContactDetailNotFound = errors.New("contact detail not found")
-
-type User interface {
-	IsAdminUser() bool
-	IsActiveUser() bool
-	GetContactByID(id int) (*Contact, error)
+type ModuleConfig struct {
+	DB *gorm.DB
 }
 
-type Requester interface {
-	IsAdminUser() bool
-	IsActiveUser() bool
+func NewContactModuleConfig(db *gorm.DB) *ModuleConfig {
+	return &ModuleConfig{
+		DB: db,
+	}
 }
 
-func NewContact(fname, lname string, userID int) (*Contact, error) {
-	fname, lname = strings.TrimSpace(fname), strings.TrimSpace(lname)
+func (config *ModuleConfig) TableMigration(wg *sync.WaitGroup) {
+	defer wg.Done()
 
-	if fname == "" {
-		return nil, apperror.NewValidationError("f_name", "first name cannot be empty")
+	if err := config.DB.AutoMigrate(&Contact{}).Error; err != nil {
+		log.Println("Contact Auto Migration Error:", err)
 	}
 
-	return &Contact{
-		FName:    fname,
-		LName:    lname,
-		UserID:   userID,
-		IsActive: true,
-	}, nil
-}
-
-func (c *Contact) UpdateField(field string, value interface{}) error {
-	switch strings.ToLower(field) {
-	case "f_name":
-		v, ok := value.(string)
-		v = strings.TrimSpace(v)
-		if !ok || v == "" {
-			return apperror.NewValidationError("f_name", "must be a non-empty string")
-		}
-		c.FName = v
-	case "l_name":
-		v, ok := value.(string)
-		v = strings.TrimSpace(v)
-		if !ok {
-			return apperror.NewValidationError("l_name", "must be a string")
-		}
-		c.LName = v
-	default:
-		return apperror.NewValidationError("field", "unknown field for contact")
+	if err := config.DB.Model(&Contact{}).
+		AddForeignKey("user_id", "users(id)", "CASCADE", "CASCADE").Error; err != nil {
+		log.Println("Contact Foreign Key Error:", err)
 	}
-	return nil
+
+	log.Println("Contact Table Migrated")
 }

@@ -9,22 +9,23 @@ import (
 	"Contact_App/models/contact_detail"
 	"Contact_App/models/user"
 
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
 
-var dbInstance *gorm.DB
+var DB *gorm.DB
 
 func InitDB() {
 	dsn := getDSN()
 
 	var err error
-	dbInstance, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	DB, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	if err != nil {
-		log.Fatalf(" Failed to connect to database: %v", err)
+		log.Fatalf("Failed to connect to database: %v", err)
 	}
 
-	err = dbInstance.AutoMigrate(
+	err = DB.AutoMigrate(
 		&user.User{},
 		&contact.Contact{},
 		&contact_detail.ContactDetail{},
@@ -33,18 +34,15 @@ func InitDB() {
 		log.Fatalf("AutoMigrate failed: %v", err)
 	}
 
-	log.Println(" Database connected and models migrated successfully.")
+	log.Println("Database connected and models migrated successfully.")
 }
 
 func GetDB() *gorm.DB {
-	if dbInstance == nil {
-		log.Fatal(" Attempted to access DB before initialization. Call InitDB() first.")
+	if DB == nil {
+		log.Fatal("DB not initialized. Call InitDB() first.")
 	}
-	return dbInstance
+	return DB
 }
-
-//A DSN is a string that contains all the information your application needs to connect to a database.
-//Data Source Name
 
 func getDSN() string {
 	dbUser := os.Getenv("DB_USER")
@@ -69,5 +67,30 @@ func getDSN() string {
 		dbName = "contact_app_project_structure"
 	}
 
-	return fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true", dbUser, dbPass, dbHost, dbPort, dbName)
+	return fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true&charset=utf8mb4", dbUser, dbPass, dbHost, dbPort, dbName)
+}
+
+func SeedInitialAdmin() (*user.User, error) {
+	var admin user.User
+	if err := DB.Where("email = ?", "admin@example.com").First(&admin).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
+			admin = user.User{
+				FName:    "Admin",
+				LName:    "User",
+				Email:    "admin@example.com",
+				Password: string(hashedPassword),
+				IsAdmin:  true,
+				IsActive: true,
+			}
+			if err := DB.Create(&admin).Error; err != nil {
+				return nil, err
+			}
+			log.Println("Initial admin user created successfully.")
+			return &admin, nil
+		}
+		return nil, err
+	}
+	log.Println("Admin user already exists.")
+	return &admin, nil
 }

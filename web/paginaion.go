@@ -34,5 +34,12 @@ func Paginate(w http.ResponseWriter, r *http.Request, db *gorm.DB, out interface
 		return
 	}
 
-	RespondJSONWithXTotalCount(w, http.StatusOK, int(total), out)
+	resp := map[string]interface{}{
+		"data":  out,
+		"total": total,
+		"page":  page,
+		"limit": limit,
+	}
+
+	RespondJSON(w, http.StatusOK, resp)
 }

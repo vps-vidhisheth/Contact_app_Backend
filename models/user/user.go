@@ -7,7 +7,7 @@ import (
 )
 
 type User struct {
-	UserID   int    `gorm:"column:user_id;primaryKey;autoIncrement" json:"user_id"`
+	UserID   uint   `gorm:"column:user_id;primaryKey;autoIncrement;type:BIGINT UNSIGNED" json:"user_id"`
 	FName    string `gorm:"column:f_name;not null" json:"first_name"`
 	LName    string `gorm:"column:l_name" json:"last_name"`
 	Email    string `gorm:"column:email;unique;not null" json:"email"`
@@ -19,8 +19,3 @@ type User struct {
 
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 }
-
-func (u *User) IsAdminActive() bool { return u.IsAdmin && u.IsActive }
-func (u *User) IsStaffActive() bool { return !u.IsAdmin && u.IsActive }
-func (u *User) IsActiveUser() bool  { return u.IsActive }
-func (u *User) IsAdminUser() bool   { return u.IsAdmin }

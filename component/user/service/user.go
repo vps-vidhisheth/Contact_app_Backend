@@ -3,10 +3,14 @@ package service
 import (
 	"Contact_App/apperror"
 	"Contact_App/component/auth"
+	"Contact_App/helper"
 	"Contact_App/models/user"
 	"Contact_App/repository"
+	"Contact_App/web"
 	"errors"
 	"fmt"
+	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -86,40 +90,33 @@ func CreateUser(repo repository.Repository, uow *repository.UnitOfWork, fname, l
 	return newUser, nil
 }
 
-// GetUserByID fetches a single user by ID
 func GetUserByID(repo repository.Repository, uow *repository.UnitOfWork, userID int, filters ...repository.QueryProcessor) (*user.User, error) {
-	// Always filter by ID
 	baseFilters := []repository.QueryProcessor{
 		repository.Filter("user_id = ?", userID),
 	}
 	baseFilters = append(baseFilters, filters...)
 
-	// Use a slice to receive results
 	var users []user.User
 	err := repo.GetAll(uow, &users, baseFilters...)
 	if err != nil {
 		return nil, err
 	}
-
 	if len(users) == 0 {
 		return nil, fmt.Errorf("user with ID %d not found", userID)
 	}
 
-	// Return the first matched user
 	return &users[0], nil
 }
 
-// GetAllUsers fetches all users with optional filters
 func GetAllUsers(repo repository.Repository, uow *repository.UnitOfWork, filters ...repository.QueryProcessor) ([]user.User, error) {
 	var users []user.User
-
 	err := repo.GetAll(uow, &users, filters...)
 	if err != nil {
 		return nil, err
 	}
-
 	return users, nil
 }
+
 func UpdateUserByID(
 	repo repository.Repository,
 	uow *repository.UnitOfWork,
@@ -139,7 +136,6 @@ func UpdateUserByID(
 		return nil, err
 	}
 
-	// Non-admins cannot update the is_admin field
 	if !claims.IsAdmin {
 		updates.IsAdmin = existing.IsAdmin
 	}
@@ -160,14 +156,12 @@ func UpdateUserByID(
 	}
 	updateMap["is_admin"] = updates.IsAdmin
 
-	// Perform SQL UPDATE
 	if err := repo.UpdateWithMap(uow, &user.User{}, updateMap,
 		repository.Filter("user_id = ?", userID),
 	); err != nil {
 		return nil, err
 	}
 
-	// Update local struct to return
 	for k, v := range updateMap {
 		switch k {
 		case "f_name":
@@ -186,14 +180,22 @@ func UpdateUserByID(
 	return &existing, nil
 }
 
-func DeleteUserByID(repo repository.Repository, uow *repository.UnitOfWork, adminID int, userID int) error {
+// Hard delete (permanently removes user)
+func DeleteUserByID(repo repository.Repository, uow *repository.UnitOfWork, adminID int, userID int, hardDelete bool) error {
 	var admin user.User
 	if err := repo.GetByID(uow, uint(adminID), &admin); err != nil {
 		return err
 	}
-	if !admin.IsAdminActive() {
+
+	adminData := helper.UserData{
+		IsAdmin:  admin.IsAdmin,
+		IsActive: admin.IsActive,
+	}
+
+	if !helper.IsAuthorizedAdmin(adminData) {
 		return apperror.NewAuthError("delete user")
 	}
+
 	if adminID == userID {
 		return apperror.NewValidationError("user", "admin cannot delete their own account")
 	}
@@ -203,8 +205,18 @@ func DeleteUserByID(repo repository.Repository, uow *repository.UnitOfWork, admi
 		return err
 	}
 
-	if err := uow.DB.Delete(&target).Error; err != nil {
-		return apperror.NewInternalError("failed to permanently delete user")
+	if hardDelete {
+
+		if err := uow.DB.Unscoped().Delete(&target).Error; err != nil {
+			return apperror.NewInternalError("failed to permanently delete user")
+		}
+	} else {
+
+		target.IsActive = false
+		target.DeletedAt = gorm.DeletedAt{Time: time.Now(), Valid: true} // ensure timestamp is set
+		if err := uow.DB.Save(&target).Error; err != nil {
+			return apperror.NewInternalError("failed to soft delete user")
+		}
 	}
 
 	return nil
@@ -216,7 +228,12 @@ func DeleteUserByIDSoftDelete(repo repository.Repository, uow *repository.UnitOf
 		return err
 	}
 
-	if !admin.IsAdminActive() {
+	adminData := helper.UserData{
+		IsAdmin:  admin.IsAdmin,
+		IsActive: admin.IsActive,
+	}
+
+	if !helper.IsAuthorizedAdmin(adminData) {
 		return apperror.NewAuthError("delete user")
 	}
 
@@ -229,12 +246,18 @@ func DeleteUserByIDSoftDelete(repo repository.Repository, uow *repository.UnitOf
 		return err
 	}
 
-	if target.DeletedAt.Valid {
-		return apperror.NewValidationError("user", "user is already deleted")
+	if !target.IsActive {
+		return apperror.NewValidationError("user", "user is already inactive")
+	}
+
+	target.IsActive = false
+
+	if err := uow.DB.Save(&target).Error; err != nil {
+		return apperror.NewInternalError("failed to update user as inactive")
 	}
 
 	if err := uow.DB.Delete(&target).Error; err != nil {
-		return apperror.NewInternalError("failed to permanently delete user")
+		return apperror.NewInternalError("failed to soft delete user")
 	}
 
 	return nil
@@ -282,4 +305,49 @@ func CreateInitialAdminUser(repo repository.Repository, uow *repository.UnitOfWo
 	}
 
 	return ExposeNewUserInternal(repo, uow, "Admin", "User", true)
+}
+
+func GetAllUsersPaginated(db *gorm.DB, w http.ResponseWriter, r *http.Request, filters ...repository.QueryProcessor) error {
+	baseQuery := db.Model(&user.User{})
+	var err error
+
+	// Apply filters
+	for _, filter := range filters {
+		baseQuery, err = filter(baseQuery, &user.User{})
+		if err != nil {
+			return err
+		}
+	}
+
+	// Pagination
+	pageStr := r.URL.Query().Get("page")
+	limitStr := r.URL.Query().Get("limit")
+	page, _ := strconv.Atoi(pageStr)
+	limit, _ := strconv.Atoi(limitStr)
+	if page <= 0 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 5
+	}
+
+	var total int64
+	if err := baseQuery.Count(&total).Error; err != nil {
+		return err
+	}
+
+	var users []user.User
+	offset := (page - 1) * limit
+	if err := baseQuery.Offset(offset).Limit(limit).Find(&users).Error; err != nil {
+		return err
+	}
+
+	web.RespondJSON(w, http.StatusOK, map[string]interface{}{
+		"data":  users,
+		"total": total,
+		"page":  page,
+		"limit": limit,
+	})
+
+	return nil
 }

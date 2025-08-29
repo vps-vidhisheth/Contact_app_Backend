@@ -1,19 +1,13 @@
 package modules
 
 import (
+	"Contact_App/app"
 	cdCtrl "Contact_App/component/contact_detail/controller"
-
-	"github.com/gorilla/mux"
-	"gorm.io/gorm"
 )
 
-func RegisterContactDetailRoutes(r *mux.Router, db *gorm.DB) {
-	handler := &cdCtrl.ContactDetailHandler{DB: db}
+func RegisterContactDetailRoutes(appObj *app.App) {
 
-	r.HandleFunc("/users/{user_id}/contacts/{contact_id}/details", handler.GetContactDetails).Methods("GET")
-	r.HandleFunc("/users/{user_id}/contacts/{contact_id}/details", handler.AddContactDetail).Methods("POST")
+	contactDetailHandler := cdCtrl.NewContactDetailHandler(appObj.DB)
 
-	r.HandleFunc("/users/{user_id}/contacts/{contact_id}/details/{detail_id}", handler.GetContactDetailByID).Methods("GET")
-	r.HandleFunc("/users/{user_id}/contacts/{contact_id}/details/{detail_id}", handler.UpdateContactDetail).Methods("PUT")
-	r.HandleFunc("/users/{user_id}/contacts/{contact_id}/details/{detail_id}", handler.DeleteContactDetail).Methods("DELETE")
+	contactDetailHandler.RegisterRoutes(appObj.Router)
 }

@@ -1,26 +1,16 @@
 package modules
 
 import (
-	"Contact_App/component/auth"
+	"Contact_App/app"
 	contactCtrl "Contact_App/component/contact/controller"
-
-	"github.com/gorilla/mux"
+	"Contact_App/component/contact/service"
 )
 
-func RegisterContactRoutes(r *mux.Router) {
-	c := r.PathPrefix("/users/{userID}/contacts").Subrouter()
+func RegisterContactRoutes(appObj *app.App) {
 
-	c.HandleFunc("", contactCtrl.CreateContactHandler).Methods("POST")
+	contactService := service.NewContactService()
 
-	c.HandleFunc("", contactCtrl.GetContactsHandler).Methods("GET")
+	contactController := contactCtrl.NewContactController(contactService)
 
-	c.HandleFunc("/{contactID}", contactCtrl.GetContactByIDHandler).Methods("GET")
-
-	c.HandleFunc("/{contactID}", contactCtrl.UpdateContactHandler).Methods("PUT")
-
-	c.HandleFunc("/{contactID}", contactCtrl.DeleteContactHandler).Methods("DELETE")
-
-	c.HandleFunc("/with-details", contactCtrl.AddContactWithDetailsHandler).Methods("POST")
-
-	c.Use(auth.MiddlewareStaffActive)
+	contactController.RegisterRoutes(appObj.Router)
 }

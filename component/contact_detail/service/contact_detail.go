@@ -16,15 +16,14 @@ type UpdateDetailInput struct {
 	Phone string `json:"phone,omitempty"`
 }
 
-// Add a new contact detail
 func AddDetailToContact(db *gorm.DB, userID, contactID int, detailType, value string) (*contact_detail.ContactDetail, error) {
 	if strings.TrimSpace(detailType) == "" || strings.TrimSpace(value) == "" {
 		return nil, apperror.NewValidationError("type/value", "type and value cannot be empty")
 	}
 
 	detail := &contact_detail.ContactDetail{
-		UserID:    userID,
-		ContactID: contactID,
+		UserID:    uint(userID),
+		ContactID: uint(contactID),
 		Type:      strings.ToLower(detailType),
 		Value:     value,
 	}
@@ -36,7 +35,6 @@ func AddDetailToContact(db *gorm.DB, userID, contactID int, detailType, value st
 	return detail, nil
 }
 
-// Update a contact detail by ID
 func UpdateDetailByID(db *gorm.DB, userID, contactID, detailID int, input UpdateDetailInput) error {
 	uow := repository.NewUnitOfWork(db, false)
 	defer uow.Rollback()
@@ -68,10 +66,9 @@ func UpdateDetailByID(db *gorm.DB, userID, contactID, detailID int, input Update
 		return apperror.NewValidationError("value", "cannot be empty")
 	}
 
-	err = contactDetailRepo.UpdateWithMap(uow, &contact_detail.ContactDetail{}, updates,
+	if err := contactDetailRepo.UpdateWithMap(uow, &contact_detail.ContactDetail{}, updates,
 		repository.Filter("contact_details_id = ? AND contact_id = ? AND user_id = ?", detailID, contactID, userID),
-	)
-	if err != nil {
+	); err != nil {
 		return err
 	}
 
@@ -79,7 +76,6 @@ func UpdateDetailByID(db *gorm.DB, userID, contactID, detailID int, input Update
 	return nil
 }
 
-// Delete a contact detail by ID
 func DeleteDetailByID(db *gorm.DB, userID, contactID, detailID int) error {
 	uow := repository.NewUnitOfWork(db, false)
 	defer uow.Rollback()
@@ -95,8 +91,7 @@ func DeleteDetailByID(db *gorm.DB, userID, contactID, detailID int) error {
 		return apperror.NewNotFoundError("contact_detail", detailID)
 	}
 
-	err = contactDetailRepo.Delete(uow, details[0])
-	if err != nil {
+	if err := contactDetailRepo.Delete(uow, details[0]); err != nil {
 		return apperror.NewInternalError("failed to delete contact detail")
 	}
 
@@ -104,7 +99,6 @@ func DeleteDetailByID(db *gorm.DB, userID, contactID, detailID int) error {
 	return nil
 }
 
-// Get all contact details with optional filters
 func GetContactDetails(db *gorm.DB, userID, contactID int, detailType, value string) ([]*contact_detail.ContactDetail, error) {
 	uow := repository.NewUnitOfWork(db, true)
 	defer uow.Rollback()
@@ -122,26 +116,24 @@ func GetContactDetails(db *gorm.DB, userID, contactID int, detailType, value str
 	}
 
 	var details []*contact_detail.ContactDetail
-	err := contactDetailRepo.GetAll(uow, &details, filters...)
-	if err != nil {
+	if err := contactDetailRepo.GetAll(uow, &details, filters...); err != nil {
 		return nil, err
 	}
 
 	return details, nil
 }
 
-// Get a single contact detail by ID
 func GetContactDetailByID(db *gorm.DB, userID, contactID, detailID int) (*contact_detail.ContactDetail, error) {
 	uow := repository.NewUnitOfWork(db, true)
 	defer uow.Rollback()
 
 	var details []*contact_detail.ContactDetail
-	err := contactDetailRepo.GetAll(uow, &details,
-		repository.Filter("contact_detail_id = ? AND contact_id = ? AND user_id = ?", detailID, contactID, userID),
-	)
-	if err != nil {
+	if err := contactDetailRepo.GetAll(uow, &details,
+		repository.Filter("contact_details_id = ? AND contact_id = ? AND user_id = ?", detailID, contactID, userID),
+	); err != nil {
 		return nil, err
 	}
+
 	if len(details) == 0 {
 		return nil, apperror.NewNotFoundError("contact_detail", detailID)
 	}

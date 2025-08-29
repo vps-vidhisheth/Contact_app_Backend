@@ -3,6 +3,7 @@ package controller
 import (
 	"Contact_App/apperror"
 	"Contact_App/component/auth"
+
 	"Contact_App/component/contact_detail/service"
 	"Contact_App/models/contact_detail"
 	"Contact_App/repository"
@@ -40,13 +41,7 @@ func (h *ContactDetailHandler) AddContactDetail(w http.ResponseWriter, r *http.R
 	}
 
 	vars := mux.Vars(r)
-	contactIDStr, ok := vars["contact_id"]
-	if !ok {
-		web.RespondError(w, apperror.NewValidationError("contact_id", "missing in URL path"))
-		return
-	}
-
-	contactID, err := strconv.Atoi(contactIDStr)
+	contactID, err := strconv.Atoi(vars["contact_id"])
 	if err != nil {
 		web.RespondError(w, apperror.NewValidationError("contact_id", "must be an integer"))
 		return
@@ -75,25 +70,8 @@ func (h *ContactDetailHandler) UpdateContactDetail(w http.ResponseWriter, r *htt
 	}
 
 	vars := mux.Vars(r)
-	contactIDStr, contactOK := vars["contact_id"]
-	detailIDStr, detailOK := vars["detail_id"]
-
-	if !contactOK || !detailOK {
-		web.RespondError(w, apperror.NewValidationError("path", "contact_id or detail_id missing"))
-		return
-	}
-
-	contactID, err := strconv.Atoi(contactIDStr)
-	if err != nil {
-		web.RespondError(w, apperror.NewValidationError("contact_id", "must be an integer"))
-		return
-	}
-
-	detailID, err := strconv.Atoi(detailIDStr)
-	if err != nil {
-		web.RespondError(w, apperror.NewValidationError("detail_id", "must be an integer"))
-		return
-	}
+	contactID, _ := strconv.Atoi(vars["contact_id"])
+	detailID, _ := strconv.Atoi(vars["detail_id"])
 
 	var req web.UpdateDetailRequest
 	if err := web.UnmarshalJSON(r, &req); err != nil {
@@ -115,32 +93,10 @@ func (h *ContactDetailHandler) UpdateContactDetail(w http.ResponseWriter, r *htt
 }
 
 func (h *ContactDetailHandler) DeleteContactDetail(w http.ResponseWriter, r *http.Request) {
-	userID, err := extractUserID(r.Context())
-	if err != nil {
-		web.RespondError(w, err)
-		return
-	}
-
+	userID, _ := extractUserID(r.Context())
 	vars := mux.Vars(r)
-	contactIDStr, contactOK := vars["contact_id"]
-	detailIDStr, detailOK := vars["detail_id"]
-
-	if !contactOK || !detailOK {
-		web.RespondError(w, apperror.NewValidationError("path", "contact_id or detail_id missing"))
-		return
-	}
-
-	contactID, err := strconv.Atoi(contactIDStr)
-	if err != nil {
-		web.RespondError(w, apperror.NewValidationError("contact_id", "must be an integer"))
-		return
-	}
-
-	detailID, err := strconv.Atoi(detailIDStr)
-	if err != nil {
-		web.RespondError(w, apperror.NewValidationError("detail_id", "must be an integer"))
-		return
-	}
+	contactID, _ := strconv.Atoi(vars["contact_id"])
+	detailID, _ := strconv.Atoi(vars["detail_id"])
 
 	if err := service.DeleteDetailByID(h.DB, userID, contactID, detailID); err != nil {
 		web.RespondError(w, err)
@@ -150,38 +106,19 @@ func (h *ContactDetailHandler) DeleteContactDetail(w http.ResponseWriter, r *htt
 	web.RespondJSON(w, http.StatusOK, map[string]string{"message": "Contact detail deleted successfully"})
 }
 
-// Get all contact details for a contact with optional filters
 func (h *ContactDetailHandler) GetContactDetails(w http.ResponseWriter, r *http.Request) {
-	userID, err := extractUserID(r.Context())
-	if err != nil {
-		web.RespondError(w, err)
-		return
-	}
+	userID, _ := extractUserID(r.Context())
+	contactID, _ := strconv.Atoi(mux.Vars(r)["contact_id"])
 
-	vars := mux.Vars(r)
-	contactIDStr, ok := vars["contact_id"]
-	if !ok {
-		web.RespondError(w, apperror.NewValidationError("contact_id", "missing in URL path"))
-		return
-	}
-
-	contactID, err := strconv.Atoi(contactIDStr)
-	if err != nil {
-		web.RespondError(w, apperror.NewValidationError("contact_id", "must be an integer"))
-		return
-	}
-
-	// Query params
 	detailType := r.URL.Query().Get("type")
 	value := r.URL.Query().Get("value")
 
-	// Repository and UnitOfWork
-	uow := repository.NewUnitOfWork(h.DB, true) // readonly
+	uow := repository.NewUnitOfWork(h.DB, true)
+	defer uow.Rollback()
 
-	// Base query with filters
 	baseQuery := uow.DB.Model(&contact_detail.ContactDetail{}).
-		Where("user_id = ?", userID).
-		Where("contact_id = ?", contactID)
+		Where("user_id = ?", uint(userID)).
+		Where("contact_id = ?", uint(contactID))
 
 	if strings.TrimSpace(detailType) != "" {
 		baseQuery = baseQuery.Where("type LIKE ?", "%"+detailType+"%")
@@ -190,63 +127,45 @@ func (h *ContactDetailHandler) GetContactDetails(w http.ResponseWriter, r *http.
 		baseQuery = baseQuery.Where("value LIKE ?", "%"+value+"%")
 	}
 
-	// Output slice
 	var details []*contact_detail.ContactDetail
-
-	// Paginate and respond
 	web.Paginate(w, r, uow.DB, &details, baseQuery)
 }
 
 func (h *ContactDetailHandler) GetContactDetailByID(w http.ResponseWriter, r *http.Request) {
-	userID, err := extractUserID(r.Context())
-	if err != nil {
-		web.RespondError(w, err)
-		return
-	}
-
+	userID, _ := extractUserID(r.Context())
 	vars := mux.Vars(r)
-	contactIDStr, contactOK := vars["contact_id"]
-	detailIDStr, detailOK := vars["detail_id"]
+	contactID, _ := strconv.Atoi(vars["contact_id"])
+	detailID, _ := strconv.Atoi(vars["detail_id"])
 
-	if !contactOK || !detailOK {
-		web.RespondError(w, apperror.NewValidationError("path", "contact_id or detail_id missing"))
-		return
-	}
-
-	contactID, err := strconv.Atoi(contactIDStr)
-	if err != nil {
-		web.RespondError(w, apperror.NewValidationError("contact_id", "must be an integer"))
-		return
-	}
-
-	detailID, err := strconv.Atoi(detailIDStr)
-	if err != nil {
-		web.RespondError(w, apperror.NewValidationError("detail_id", "must be an integer"))
-		return
-	}
-
-	// Repository and UnitOfWork
 	detailRepo := repository.NewGormRepository()
-	uow := repository.NewUnitOfWork(h.DB, true) // readonly
+	uow := repository.NewUnitOfWork(h.DB, true)
+	defer uow.Rollback()
 
 	var detail contact_detail.ContactDetail
 	filters := []repository.QueryProcessor{
-		repository.Filter("user_id = ?", userID),
-		repository.Filter("contact_id = ?", contactID),
-		repository.Filter("contact_detail_id = ?", detailID),
+		repository.Filter("user_id = ?", uint(userID)),
+		repository.Filter("contact_id = ?", uint(contactID)),
+		repository.Filter("contact_details_id = ?", uint(detailID)),
 	}
 
-	err = detailRepo.GetAll(uow, &detail, filters...)
+	err := detailRepo.GetAll(uow, &detail, filters...)
 	if err != nil {
 		web.RespondError(w, err)
 		return
 	}
 
-	// If no record found, return 404
 	if detail == (contact_detail.ContactDetail{}) {
 		web.RespondErrorMessage(w, http.StatusNotFound, "contact detail not found")
 		return
 	}
 
 	web.RespondJSON(w, http.StatusOK, detail)
+}
+
+func (h *ContactDetailHandler) RegisterRoutes(router *mux.Router) {
+	router.HandleFunc("/users/{user_id}/contacts/{contact_id}/details", h.GetContactDetails).Methods("GET")
+	router.HandleFunc("/users/{user_id}/contacts/{contact_id}/details", h.AddContactDetail).Methods("POST")
+	router.HandleFunc("/users/{user_id}/contacts/{contact_id}/details/{detail_id}", h.GetContactDetailByID).Methods("GET")
+	router.HandleFunc("/users/{user_id}/contacts/{contact_id}/details/{detail_id}", h.UpdateContactDetail).Methods("PUT")
+	router.HandleFunc("/users/{user_id}/contacts/{contact_id}/details/{detail_id}", h.DeleteContactDetail).Methods("DELETE")
 }

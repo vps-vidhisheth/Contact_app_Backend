@@ -1,67 +1,26 @@
 package user
 
 import (
-	"errors"
-	"fmt"
-	"strings"
+	"log"
+	"sync"
 
-	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
-func hashPassword(password string) (string, error) {
-	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	return string(hashed), err
+type ModuleConfig struct {
+	DB *gorm.DB
 }
 
-func SeedInitialAdmin(db *gorm.DB) (*User, error) {
-	const defaultEmail = "admin.user@example.com"
-	const defaultPassword = "admin123"
-
-	var existing User
-	err := db.Where("email = ?", defaultEmail).First(&existing).Error
-	if err == nil {
-
-		return &existing, nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
-	}
-
-	hashedPass, hashErr := hashPassword(defaultPassword)
-	if hashErr != nil {
-		return nil, fmt.Errorf("failed to hash password: %v", hashErr)
-	}
-
-	admin := &User{
-		FName:    "Admin",
-		LName:    "User",
-		Email:    defaultEmail,
-		Password: hashedPass,
-		IsAdmin:  true,
-		IsActive: true,
-	}
-
-	if err := db.Create(admin).Error; err != nil {
-		return nil, fmt.Errorf("failed to seed initial admin: %v", err)
-	}
-	return admin, nil
+func NewUserModuleConfig(db *gorm.DB) *ModuleConfig {
+	return &ModuleConfig{DB: db}
 }
 
-func NewInternalUser(fname, lname string, isAdmin bool) (*User, error) {
-	email := fmt.Sprintf("%s.%s@example.com", strings.ToLower(fname), strings.ToLower(lname))
+func (config *ModuleConfig) TableMigration(wg *sync.WaitGroup) {
+	defer wg.Done()
 
-	hashedPass, hashErr := hashPassword("admin123")
-	if hashErr != nil {
-		return nil, fmt.Errorf("failed to hash password: %v", hashErr)
+	if err := config.DB.AutoMigrate(&User{}); err != nil {
+		log.Println("User Auto Migration Error:", err)
 	}
 
-	return &User{
-		FName:    fname,
-		LName:    lname,
-		Email:    email,
-		Password: hashedPass,
-		IsAdmin:  isAdmin,
-		IsActive: true,
-	}, nil
+	log.Println("User Table Migrated")
 }

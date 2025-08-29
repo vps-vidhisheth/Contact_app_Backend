@@ -1,35 +1,10 @@
 package contact_detail
 
-import (
-	"Contact_App/apperror"
-	"strings"
-)
-
 type ContactDetail struct {
-	ContactDetailsID int    `gorm:"primaryKey;autoIncrement" json:"contact_details_id"`
-	UserID           int    `gorm:"not null" json:"user_id"`
-	ContactID        int    `gorm:"not null" json:"contact_id"`
+	ContactDetailsID uint   `gorm:"primaryKey;autoIncrement;type:BIGINT UNSIGNED" json:"contact_details_id"`
+	UserID           uint   `gorm:"not null;index;type:BIGINT UNSIGNED" json:"user_id"`
+	ContactID        uint   `gorm:"not null;index;type:BIGINT UNSIGNED" json:"contact_id"`
 	Type             string `gorm:"not null" json:"type"`
 	Value            string `gorm:"not null" json:"value"`
-	IsActive         bool   `json:"is_active" gorm:"default:true"`
-}
-
-func (d *ContactDetail) updateType(value interface{}) error {
-	v, ok := value.(string)
-	v = strings.ToLower(strings.TrimSpace(v))
-	if !ok || (v != "email" && v != "phone") {
-		return apperror.NewValidationError("type", "must be either 'email' or 'phone'")
-	}
-	d.Type = v
-	return nil
-}
-
-func (d *ContactDetail) updateValue(value interface{}) error {
-	v, ok := value.(string)
-	v = strings.TrimSpace(v)
-	if !ok || v == "" {
-		return apperror.NewValidationError("value", "must be a non-empty string")
-	}
-	d.Value = v
-	return nil
+	IsActive         bool   `gorm:"default:true" json:"is_active"`
 }

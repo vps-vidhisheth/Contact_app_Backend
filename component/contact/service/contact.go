@@ -11,33 +11,40 @@ import (
 	"gorm.io/gorm"
 )
 
-type UpdateFieldInput struct {
-	Field string `json:"field"`
-	Value string `json:"value"`
+type ContactService struct {
+	contactRepo       repository.Repository
+	contactDetailRepo repository.Repository
 }
 
-var contactRepo = repository.NewGormRepository()
-var contactDetailRepo = repository.NewGormRepository()
-
-func CreateContact(userID int, fname, lname string) (*contact.Contact, error) {
-	if strings.TrimSpace(fname) == "" {
-		return nil, apperror.NewValidationError("fname", "first name cannot be empty")
+func NewContactService() *ContactService {
+	return &ContactService{
+		contactRepo:       repository.NewGormRepository(),
+		contactDetailRepo: repository.NewGormRepository(),
 	}
-	if strings.TrimSpace(lname) == "" {
-		return nil, apperror.NewValidationError("lname", "last name cannot be empty")
+}
+
+// CreateContact creates a new contact for a user
+func (s *ContactService) CreateContact(userID uint, fname, lname string) (*contact.Contact, error) {
+	fname = strings.TrimSpace(fname)
+	lname = strings.TrimSpace(lname)
+	if fname == "" {
+		return nil, apperror.NewValidationError("first_name", "cannot be empty")
+	}
+	if lname == "" {
+		return nil, apperror.NewValidationError("last_name", "cannot be empty")
 	}
 
 	newContact := &contact.Contact{
 		UserID:   userID,
-		FName:    strings.TrimSpace(fname),
-		LName:    strings.TrimSpace(lname),
+		FName:    fname,
+		LName:    lname,
 		IsActive: true,
 	}
 
 	uow := repository.NewUnitOfWork(db.GetDB(), false)
 	defer uow.Rollback()
 
-	if err := contactRepo.Add(uow, newContact); err != nil {
+	if err := s.contactRepo.Add(uow, newContact); err != nil {
 		return nil, err
 	}
 
@@ -45,235 +52,192 @@ func CreateContact(userID int, fname, lname string) (*contact.Contact, error) {
 	return newContact, nil
 }
 
-func GetContacts(userID int, filters ...map[string]string) ([]*contact.Contact, error) {
+// GetContactsWithDetails retrieves all contacts belonging to the given user
+func (s *ContactService) GetContactsWithDetails(userID uint, filters map[string]string) ([]*contact.Contact, error) {
 	var contacts []*contact.Contact
 	uow := repository.NewUnitOfWork(db.GetDB(), true)
 
-	query := uow.DB.Preload("Details").Where("user_id = ?", userID)
+	query := uow.DB.Preload("Details").Where("user_id = ? AND is_active = ?", userID, true)
 
-	if len(filters) > 0 {
-		f := filters[0]
-		if name, ok := f["name"]; ok && strings.TrimSpace(name) != "" {
-			query = query.Where("f_name LIKE ? OR l_name LIKE ?", "%"+name+"%", "%"+name+"%")
-		}
-		if email, ok := f["email"]; ok && strings.TrimSpace(email) != "" {
-			query = query.Joins("JOIN contact_details ON contacts.contact_id = contact_details.contact_id").
-				Where("contact_details.type = 'email' AND contact_details.value LIKE ?", "%"+email+"%")
-		}
-		if phone, ok := f["phone"]; ok && strings.TrimSpace(phone) != "" {
-			query = query.Joins("JOIN contact_details ON contacts.contact_id = contact_details.contact_id").
-				Where("contact_details.type = 'phone' AND contact_details.value LIKE ?", "%"+phone+"%")
-		}
-	}
-
-	if err := query.Find(&contacts).Error; err != nil {
-		return nil, err
-	}
-
-	return contacts, nil
-}
-
-func GetContactByID(userID, contactID int) (*contact.Contact, error) {
-	var contact contact.Contact
-	uow := repository.NewUnitOfWork(db.GetDB(), true)
-
-	err := uow.DB.Preload("Details").
-		Where("contact_id = ? AND user_id = ?", contactID, userID).
-		First(&contact).Error
-
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NewNotFoundError("contact", contactID)
-		}
-		return nil, err
-	}
-
-	return &contact, nil
-
-}
-
-func AddOrUpdateContactDetail(contactID int, detailType, value string) error {
-	if strings.TrimSpace(detailType) == "" || strings.TrimSpace(value) == "" {
-		return apperror.NewValidationError("detail", "type and value cannot be empty")
-	}
-
-	uow := repository.NewUnitOfWork(db.GetDB(), false)
-	defer uow.Rollback()
-
-	var existingDetail contact_detail.ContactDetail
-	err := uow.DB.Where("contact_id = ? AND type = ?", contactID, detailType).First(&existingDetail).Error
-
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			// Create new detail
-			newDetail := &contact_detail.ContactDetail{
-				ContactID: contactID,
-				Type:      strings.TrimSpace(detailType),
-				Value:     strings.TrimSpace(value),
-			}
-			if err := contactDetailRepo.Add(uow, newDetail); err != nil {
-				return err
-			}
-		} else {
-			return err
-		}
-	} else {
-		// Update existing detail
-		updates := map[string]interface{}{
-			"value": strings.TrimSpace(value),
-		}
-		if err := contactDetailRepo.UpdateWithMap(uow, &contact_detail.ContactDetail{}, updates,
-			repository.Filter("contact_details_id = ? AND contact_id = ?", existingDetail.ContactDetailsID, contactID),
-		); err != nil {
-			return err
-		}
-	}
-
-	uow.Commit()
-	return nil
-}
-
-// Update contact fields
-func UpdateContactByID(userID, contactID int, field string, value interface{}) error {
-	contactObj, err := GetContactByID(userID, contactID)
-	if err != nil {
-		return err
-	}
-
-	updates := make(map[string]interface{})
-	switch strings.ToLower(field) {
-	case "fname", "firstname":
-		strVal, ok := value.(string)
-		if !ok || strings.TrimSpace(strVal) == "" {
-			return apperror.NewValidationError("fname", "must be a non-empty string")
-		}
-		updates["f_name"] = strings.TrimSpace(strVal)
-
-	case "lname", "lastname":
-		strVal, ok := value.(string)
-		if !ok || strings.TrimSpace(strVal) == "" {
-			return apperror.NewValidationError("lname", "must be a non-empty string")
-		}
-		updates["l_name"] = strings.TrimSpace(strVal)
-
-	case "is_active":
-		boolVal, ok := value.(bool)
-		if !ok {
-			return apperror.NewValidationError("is_active", "must be a boolean")
-		}
-		updates["is_active"] = boolVal
-
-	default:
-		return apperror.NewValidationError("field", "unknown contact field")
-	}
-
-	uow := repository.NewUnitOfWork(db.GetDB(), false)
-	defer uow.Rollback()
-
-	err = contactRepo.UpdateWithMap(uow, contactObj, updates,
-		repository.Filter("contact_id = ? AND user_id = ?", contactID, userID),
-	)
-	if err != nil {
-		return err
-	}
-
-	uow.Commit()
-	return nil
-}
-
-func DeleteContactByID(userID, contactID int) error {
-	uow := repository.NewUnitOfWork(db.GetDB(), false)
-	defer uow.Rollback()
-
-	var contacts []*contact.Contact
-	err := contactRepo.GetAll(uow, &contacts,
-		repository.Filter("contact_id = ? AND user_id = ?", contactID, userID),
-	)
-	if err != nil {
-		return err
-	}
-	if len(contacts) == 0 || contacts[0].ContactID == 0 {
-		return apperror.NewNotFoundError("contact", contactID)
-	}
-
-	err = contactRepo.Delete(uow, &contact.Contact{},
-		repository.Filter("contact_id = ? AND user_id = ?", contactID, userID),
-	)
-	if err != nil {
-		return err
-	}
-
-	uow.Commit()
-	return nil
-}
-
-func GetContactsFiltered(userID int, fName, lName, phone string, contactRepo repository.Repository, db *repository.UnitOfWork) ([]*contact.Contact, error) {
-	var contacts []*contact.Contact
-	uow := repository.NewUnitOfWork(db.DB, true) // readonly
-
-	// Start with base filter (always by userID)
-	filters := []repository.QueryProcessor{
-		repository.Filter("user_id = ?", userID),
-	}
-
-	// Add filters only if query params are present
-	if strings.TrimSpace(fName) != "" {
-		filters = append(filters, repository.Filter("f_name LIKE ?", "%"+fName+"%"))
-	}
-	if strings.TrimSpace(lName) != "" {
-		filters = append(filters, repository.Filter("l_name LIKE ?", "%"+lName+"%"))
-	}
-	if strings.TrimSpace(phone) != "" {
-		filters = append(filters, repository.Filter("phone LIKE ?", "%"+phone+"%"))
-	}
-
-	// Fetch filtered contacts
-	err := contactRepo.GetAll(uow, &contacts, filters...)
-	if err != nil {
-		return nil, err
-	}
-
-	return contacts, nil
-}
-
-func GetContactsWithDetails(userID int, filters map[string]string) ([]*contact.Contact, error) {
-	var contacts []*contact.Contact
-	uow := repository.NewUnitOfWork(db.GetDB(), true)
-
-	query := uow.DB.Preload("Details").Where("user_id = ?", userID)
-
-	if fName := strings.TrimSpace(filters["f_name"]); fName != "" {
-		query = query.Where("f_name LIKE ?", "%"+fName+"%")
-	}
-	if lName := strings.TrimSpace(filters["l_name"]); lName != "" {
-		query = query.Where("l_name LIKE ?", "%"+lName+"%")
+	if name := strings.TrimSpace(filters["f_name"]); name != "" {
+		query = query.Where("f_name LIKE ? OR l_name LIKE ?", "%"+name+"%", "%"+name+"%")
 	}
 	if phone := strings.TrimSpace(filters["phone"]); phone != "" {
 		query = query.Joins("JOIN contact_details ON contacts.contact_id = contact_details.contact_id").
-			Where("contact_details.value LIKE ?", "%"+phone+"%")
+			Where("contacts.user_id = ? AND contact_details.type = 'phone' AND contact_details.value LIKE ?", userID, "%"+phone+"%")
 	}
 
 	if err := query.Find(&contacts).Error; err != nil {
 		return nil, err
 	}
-
 	return contacts, nil
 }
 
-func GetContactByIDWithDetails(userID, contactID int) (*contact.Contact, error) {
-	var contact contact.Contact
-	uow := repository.NewUnitOfWork(db.GetDB(), true) // readonly
+// GetContactByIDWithDetails retrieves a single contact by ID ensuring ownership
+func (s *ContactService) GetContactByIDWithDetails(userID, contactID uint) (*contact.Contact, error) {
+	var c contact.Contact
+	uow := repository.NewUnitOfWork(db.GetDB(), true)
 
 	err := uow.DB.Preload("Details").
-		Where("contact_id = ? AND user_id = ?", contactID, userID).
-		First(&contact).Error
-
+		Where("contact_id = ? AND user_id = ? AND is_active = ?", contactID, userID, true).
+		First(&c).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NewNotFoundError("contact", contactID)
+			return nil, apperror.NewNotFoundError("contact", int(contactID))
 		}
 		return nil, err
 	}
+	return &c, nil
+}
 
-	return &contact, nil
+// AddOrUpdateContactDetail adds or updates a contact detail using the provided transaction
+func (s *ContactService) AddOrUpdateContactDetail(uow *repository.UnitOfWork, userID, contactID uint, detailType, value string) error {
+	detailType = strings.ToLower(strings.TrimSpace(detailType))
+	value = strings.TrimSpace(value)
+	if detailType == "" || value == "" {
+		return apperror.NewValidationError("detail", "type and value cannot be empty")
+	}
+
+	// Check if detail exists
+	var detail contact_detail.ContactDetail
+	err := uow.DB.Where("contact_id = ? AND type = ?", contactID, detailType).First(&detail).Error
+	if err != nil && err != gorm.ErrRecordNotFound {
+		return err
+	}
+
+	if err == gorm.ErrRecordNotFound {
+		newDetail := &contact_detail.ContactDetail{
+			ContactID: contactID,
+			UserID:    userID,
+			Type:      detailType,
+			Value:     value,
+			IsActive:  true,
+		}
+		if err := s.contactDetailRepo.Add(uow, newDetail); err != nil {
+			return err
+		}
+	} else {
+		detail.Value = value
+		if err := s.contactDetailRepo.Update(uow, &detail); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *ContactService) UpdateContactByID(userID, contactID uint, updates map[string]interface{}) error {
+	// Start a single transaction for the entire update
+	uow := repository.NewUnitOfWork(db.GetDB(), false)
+	defer uow.Rollback()
+
+	// Fetch the contact (ensures ownership)
+	c, err := s.GetContactByIDWithDetails(userID, contactID)
+	if err != nil {
+		return err
+	}
+
+	updateMap := make(map[string]interface{})
+
+	if v, ok := updates["first_name"]; ok {
+		strVal, _ := v.(string)
+		strVal = strings.TrimSpace(strVal)
+		if strVal == "" {
+			return apperror.NewValidationError("first_name", "cannot be empty")
+		}
+		updateMap["f_name"] = strVal
+	}
+
+	if v, ok := updates["last_name"]; ok {
+		strVal, _ := v.(string)
+		strVal = strings.TrimSpace(strVal)
+		if strVal == "" {
+			return apperror.NewValidationError("last_name", "cannot be empty")
+		}
+		updateMap["l_name"] = strVal
+	}
+
+	if v, ok := updates["is_active"]; ok {
+		switch val := v.(type) {
+		case bool:
+			updateMap["is_active"] = val
+		case string:
+			lower := strings.ToLower(strings.TrimSpace(val))
+			if lower == "true" {
+				updateMap["is_active"] = true
+			} else if lower == "false" {
+				updateMap["is_active"] = false
+			} else {
+				return apperror.NewValidationError("is_active", "must be a boolean")
+			}
+		default:
+			return apperror.NewValidationError("is_active", "must be a boolean")
+		}
+	}
+
+	// Update contact fields if any
+	if len(updateMap) > 0 {
+		if err := s.contactRepo.UpdateWithMap(uow, c, updateMap, repository.Filter("contact_id = ? AND user_id = ?", contactID, userID)); err != nil {
+			return err
+		}
+	}
+
+	// Update details
+	if v, ok := updates["details"]; ok {
+		if details, ok2 := v.([]interface{}); ok2 {
+			for _, d := range details {
+				if detailMap, ok3 := d.(map[string]interface{}); ok3 {
+					dType, _ := detailMap["type"].(string)
+					dVal, _ := detailMap["value"].(string)
+					dType = strings.TrimSpace(dType)
+					dVal = strings.TrimSpace(dVal)
+					if dType != "" && dVal != "" {
+						if err := s.AddOrUpdateContactDetail(uow, userID, contactID, dType, dVal); err != nil {
+							return err
+						}
+					}
+				}
+			}
+		}
+	}
+
+	uow.Commit()
+	return nil
+}
+
+// DeleteContactByID soft deletes a contact and its details
+func (s *ContactService) DeleteContactByID(userID, contactID uint) error {
+	uow := repository.NewUnitOfWork(db.GetDB(), false)
+	defer uow.Rollback()
+
+	// Soft delete the contact
+	if err := s.contactRepo.Delete(uow, &contact.Contact{}, repository.Filter("contact_id = ? AND user_id = ?", contactID, userID)); err != nil {
+		return err
+	}
+
+	// Soft delete all contact details associated with this contact
+	if err := s.contactDetailRepo.UpdateWithMap(
+		uow,
+		&contact_detail.ContactDetail{},
+		map[string]interface{}{"is_active": false},
+		repository.Filter("contact_id = ? AND user_id = ?", contactID, userID),
+	); err != nil {
+		return err
+	}
+
+	uow.Commit()
+	return nil
+}
+
+func (s *ContactService) CreateContactWithUOW(uow *repository.UnitOfWork, userID uint, fname, lname string) (*contact.Contact, error) {
+	newContact := &contact.Contact{
+		UserID:   userID,
+		FName:    strings.TrimSpace(fname),
+		LName:    strings.TrimSpace(lname),
+		IsActive: true,
+	}
+	if err := s.contactRepo.Add(uow, newContact); err != nil {
+		return nil, err
+	}
+	return newContact, nil
 }

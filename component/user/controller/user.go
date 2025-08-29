@@ -3,7 +3,6 @@ package controller
 import (
 	"Contact_App/component/auth"
 	"Contact_App/component/user/service"
-	"Contact_App/db"
 	"Contact_App/repository"
 	"Contact_App/web"
 	"encoding/json"
@@ -11,7 +10,12 @@ import (
 	"strconv"
 
 	"github.com/gorilla/mux"
+	"gorm.io/gorm"
 )
+
+type UserHandler struct {
+	DB *gorm.DB
+}
 
 type userInput struct {
 	FName    string `json:"f_name"`
@@ -27,18 +31,37 @@ type loginRequest struct {
 	Password string `json:"password"`
 }
 
-func CreateUserHandler(w http.ResponseWriter, r *http.Request) {
+func NewUserHandler(db *gorm.DB) *UserHandler {
+	return &UserHandler{DB: db}
+}
+
+func (h *UserHandler) RegisterRoutes(router *mux.Router) {
+
+	router.HandleFunc("/login", h.LoginHandler).Methods("POST")
+	router.HandleFunc("/user", h.CreateUserHandler).Methods("POST")
+
+	admin := router.PathPrefix("/user").Subrouter()
+	admin.Use(auth.MiddlewareAdminActive)
+	admin.HandleFunc("", h.GetAllUsersHandler).Methods("GET")
+	admin.HandleFunc("/{userID}", h.UpdateUserHandler).Methods("PUT")
+	admin.HandleFunc("/{userID}", h.DeleteUserHandler).Methods("DELETE")
+
+	secured := router.PathPrefix("/user").Subrouter()
+	secured.Use(auth.MiddlewareAdminActive)
+	secured.HandleFunc("/{userID}", h.GetUserByIDHandler).Methods("GET")
+}
+
+func (h *UserHandler) CreateUserHandler(w http.ResponseWriter, r *http.Request) {
 	var input userInput
 	if err := web.UnmarshalJSON(r, &input); err != nil {
 		web.RespondError(w, err)
 		return
 	}
 
-	uow := repository.NewUnitOfWork(db.GetDB(), false)
+	uow := repository.NewUnitOfWork(h.DB, false)
 	defer uow.Rollback()
 
 	userRepo := repository.NewGormRepository()
-
 	u, err := service.CreateUser(userRepo, uow, input.FName, input.LName, input.IsAdmin, input.IsActive, input.Email, input.Password)
 	if err != nil {
 		web.RespondError(w, err)
@@ -52,16 +75,14 @@ func CreateUserHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func LoginHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
+func (h *UserHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	var creds loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
 		web.RespondErrorMessage(w, http.StatusBadRequest, "Invalid login payload")
 		return
 	}
 
-	u, err := service.Authenticate(db.GetDB(), creds.Email, creds.Password)
+	u, err := service.Authenticate(h.DB, creds.Email, creds.Password)
 	if err != nil {
 		web.RespondErrorMessage(w, http.StatusUnauthorized, "Login failed. Please check credentials")
 		return
@@ -79,7 +100,7 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func GetUserByIDHandler(w http.ResponseWriter, r *http.Request) {
+func (h *UserHandler) GetUserByIDHandler(w http.ResponseWriter, r *http.Request) {
 	idParam := mux.Vars(r)["userID"]
 	id, err := strconv.Atoi(idParam)
 	if err != nil {
@@ -87,12 +108,10 @@ func GetUserByIDHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	uow := repository.NewUnitOfWork(db.GetDB(), true)
+	uow := repository.NewUnitOfWork(h.DB, true)
 	defer uow.Rollback()
 
 	userRepo := repository.NewGormRepository()
-
-	// Fetch user by ID
 	u, err := service.GetUserByID(userRepo, uow, id)
 	if err != nil {
 		web.RespondErrorMessage(w, http.StatusNotFound, "User not found")
@@ -102,13 +121,10 @@ func GetUserByIDHandler(w http.ResponseWriter, r *http.Request) {
 	web.RespondJSON(w, http.StatusOK, u)
 }
 
-func GetAllUsersHandler(w http.ResponseWriter, r *http.Request) {
-	uow := repository.NewUnitOfWork(db.GetDB(), true)
+func (h *UserHandler) GetAllUsersHandler(w http.ResponseWriter, r *http.Request) {
+	uow := repository.NewUnitOfWork(h.DB, true)
 	defer uow.Rollback()
 
-	userRepo := repository.NewGormRepository()
-
-	// Build filters
 	filters := []repository.QueryProcessor{}
 	if fName := r.URL.Query().Get("f_name"); fName != "" {
 		filters = append(filters, repository.Filter("f_name LIKE ?", "%"+fName+"%"))
@@ -120,15 +136,12 @@ func GetAllUsersHandler(w http.ResponseWriter, r *http.Request) {
 		filters = append(filters, repository.Filter("email LIKE ?", "%"+email+"%"))
 	}
 
-	users, err := service.GetAllUsers(userRepo, uow, filters...)
-	if err != nil {
+	if err := service.GetAllUsersPaginated(uow.DB, w, r, filters...); err != nil {
 		web.RespondError(w, err)
-		return
 	}
-
-	web.RespondJSON(w, http.StatusOK, users)
 }
-func UpdateUserHandler(w http.ResponseWriter, r *http.Request) {
+
+func (h *UserHandler) UpdateUserHandler(w http.ResponseWriter, r *http.Request) {
 	claims := auth.GetUserClaims(r)
 	if claims == nil || !claims.IsActive {
 		web.RespondErrorMessage(w, http.StatusUnauthorized, "Unauthorized or inactive user")
@@ -148,12 +161,11 @@ func UpdateUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	uow := repository.NewUnitOfWork(db.GetDB(), false)
+	uow := repository.NewUnitOfWork(h.DB, false)
 	defer uow.Rollback()
 
 	userRepo := repository.NewGormRepository()
 
-	// Admins can update any user; non-admins can update only themselves
 	if !claims.IsAdmin && claims.UserID != userID {
 		web.RespondErrorMessage(w, http.StatusForbidden, "You can only update your own profile")
 		return
@@ -172,7 +184,6 @@ func UpdateUserHandler(w http.ResponseWriter, r *http.Request) {
 		Password: input.Password,
 	}
 
-	// Only admins can update the IsAdmin field
 	if claims.IsAdmin {
 		updateData.IsAdmin = input.IsAdmin
 	}
@@ -190,7 +201,7 @@ func UpdateUserHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func DeleteUserHandler(w http.ResponseWriter, r *http.Request) {
+func (h *UserHandler) DeleteUserHandler(w http.ResponseWriter, r *http.Request) {
 	claims := auth.GetUserClaims(r)
 	if claims == nil {
 		web.RespondErrorMessage(w, http.StatusUnauthorized, "Unauthorized")
@@ -204,13 +215,11 @@ func DeleteUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	uow := repository.NewUnitOfWork(db.GetDB(), false)
+	uow := repository.NewUnitOfWork(h.DB, false)
 	defer uow.Rollback()
 
 	userRepo := repository.NewGormRepository()
-
-	err = service.DeleteUserByIDSoftDelete(userRepo, uow, claims.UserID, userID)
-	if err != nil {
+	if err := service.DeleteUserByIDSoftDelete(userRepo, uow, claims.UserID, userID); err != nil {
 		web.RespondError(w, err)
 		return
 	}
