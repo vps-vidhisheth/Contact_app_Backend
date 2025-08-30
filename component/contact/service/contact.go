@@ -98,7 +98,6 @@ func (s *ContactService) AddOrUpdateContactDetail(uow *repository.UnitOfWork, us
 		return apperror.NewValidationError("detail", "type and value cannot be empty")
 	}
 
-	// Check if detail exists
 	var detail contact_detail.ContactDetail
 	err := uow.DB.Where("contact_id = ? AND type = ?", contactID, detailType).First(&detail).Error
 	if err != nil && err != gorm.ErrRecordNotFound {
@@ -127,11 +126,9 @@ func (s *ContactService) AddOrUpdateContactDetail(uow *repository.UnitOfWork, us
 }
 
 func (s *ContactService) UpdateContactByID(userID, contactID uint, updates map[string]interface{}) error {
-	// Start a single transaction for the entire update
 	uow := repository.NewUnitOfWork(db.GetDB(), false)
 	defer uow.Rollback()
 
-	// Fetch the contact (ensures ownership)
 	c, err := s.GetContactByIDWithDetails(userID, contactID)
 	if err != nil {
 		return err
@@ -175,14 +172,12 @@ func (s *ContactService) UpdateContactByID(userID, contactID uint, updates map[s
 		}
 	}
 
-	// Update contact fields if any
 	if len(updateMap) > 0 {
 		if err := s.contactRepo.UpdateWithMap(uow, c, updateMap, repository.Filter("contact_id = ? AND user_id = ?", contactID, userID)); err != nil {
 			return err
 		}
 	}
 
-	// Update details
 	if v, ok := updates["details"]; ok {
 		if details, ok2 := v.([]interface{}); ok2 {
 			for _, d := range details {
@@ -205,17 +200,14 @@ func (s *ContactService) UpdateContactByID(userID, contactID uint, updates map[s
 	return nil
 }
 
-// DeleteContactByID soft deletes a contact and its details
 func (s *ContactService) DeleteContactByID(userID, contactID uint) error {
 	uow := repository.NewUnitOfWork(db.GetDB(), false)
 	defer uow.Rollback()
 
-	// Soft delete the contact
 	if err := s.contactRepo.Delete(uow, &contact.Contact{}, repository.Filter("contact_id = ? AND user_id = ?", contactID, userID)); err != nil {
 		return err
 	}
 
-	// Soft delete all contact details associated with this contact
 	if err := s.contactDetailRepo.UpdateWithMap(
 		uow,
 		&contact_detail.ContactDetail{},

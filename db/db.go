@@ -44,6 +44,7 @@ func GetDB() *gorm.DB {
 	return DB
 }
 
+// Data Source Name
 func getDSN() string {
 	dbUser := os.Getenv("DB_USER")
 	dbPass := os.Getenv("DB_PASS")
