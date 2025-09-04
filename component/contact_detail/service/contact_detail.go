@@ -91,8 +91,16 @@ func DeleteDetailByID(db *gorm.DB, userID, contactID, detailID int) error {
 		return apperror.NewNotFoundError("contact_detail", detailID)
 	}
 
-	if err := contactDetailRepo.Delete(uow, details[0]); err != nil {
-		return apperror.NewInternalError("failed to delete contact detail")
+	detail := details[0]
+
+	// Step 1: mark is_active = false
+	if err := uow.DB.Model(detail).Update("is_active", false).Error; err != nil {
+		return apperror.NewInternalError("failed to set is_active=false")
+	}
+
+	// Step 2: perform soft delete (sets DeletedAt)
+	if err := uow.DB.Delete(detail).Error; err != nil {
+		return apperror.NewInternalError("failed to soft delete contact detail")
 	}
 
 	uow.Commit()

@@ -204,17 +204,30 @@ func (s *ContactService) DeleteContactByID(userID, contactID uint) error {
 	uow := repository.NewUnitOfWork(db.GetDB(), false)
 	defer uow.Rollback()
 
-	if err := s.contactRepo.Delete(uow, &contact.Contact{}, repository.Filter("contact_id = ? AND user_id = ?", contactID, userID)); err != nil {
-		return err
+	// Step 1: set is_active=false for contact
+	if err := uow.DB.Model(&contact.Contact{}).
+		Where("contact_id = ? AND user_id = ?", contactID, userID).
+		Update("is_active", false).Error; err != nil {
+		return apperror.NewInternalError("failed to set contact inactive")
 	}
 
-	if err := s.contactDetailRepo.UpdateWithMap(
-		uow,
-		&contact_detail.ContactDetail{},
-		map[string]interface{}{"is_active": false},
-		repository.Filter("contact_id = ? AND user_id = ?", contactID, userID),
-	); err != nil {
-		return err
+	// Step 2: soft delete contact (gorm sets deleted_at)
+	if err := uow.DB.Where("contact_id = ? AND user_id = ?", contactID, userID).
+		Delete(&contact.Contact{}).Error; err != nil {
+		return apperror.NewInternalError("failed to soft delete contact")
+	}
+
+	// Step 3: set is_active=false for related contact_details
+	if err := uow.DB.Model(&contact_detail.ContactDetail{}).
+		Where("contact_id = ? AND user_id = ?", contactID, userID).
+		Update("is_active", false).Error; err != nil {
+		return apperror.NewInternalError("failed to set details inactive")
+	}
+
+	// Step 4: soft delete related details
+	if err := uow.DB.Where("contact_id = ? AND user_id = ?", contactID, userID).
+		Delete(&contact_detail.ContactDetail{}).Error; err != nil {
+		return apperror.NewInternalError("failed to soft delete details")
 	}
 
 	uow.Commit()

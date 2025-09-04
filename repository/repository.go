@@ -119,6 +119,18 @@ func applyQueryProcessors(db *gorm.DB, out interface{}, processors ...QueryProce
 	return db, nil
 }
 
+//	func (r *GormRepository) Delete(uow *UnitOfWork, model interface{}, queryProcessors ...QueryProcessor) error {
+//		db := uow.DB.Model(model)
+//		var err error
+//		db, err = applyQueryProcessors(db, model, queryProcessors...)
+//		if err != nil {
+//			return err
+//		}
+//		if err := db.Update("is_active", false).Error; err != nil {
+//			return apperror.NewInternalError(fmt.Sprintf("soft delete failed: %v", err))
+//		}
+//		return nil
+//	}
 func (r *GormRepository) Delete(uow *UnitOfWork, model interface{}, queryProcessors ...QueryProcessor) error {
 	db := uow.DB.Model(model)
 	var err error
@@ -126,7 +138,7 @@ func (r *GormRepository) Delete(uow *UnitOfWork, model interface{}, queryProcess
 	if err != nil {
 		return err
 	}
-	if err := db.Update("is_active", false).Error; err != nil {
+	if err := db.Delete(model).Error; err != nil {
 		return apperror.NewInternalError(fmt.Sprintf("soft delete failed: %v", err))
 	}
 	return nil

@@ -127,7 +127,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/golang-jwt/jwt/v4" // ✅ use v5 (your service uses v5 too)
+	"github.com/golang-jwt/jwt/v4"
 	"golang.org/x/crypto/bcrypt"
 )
 
